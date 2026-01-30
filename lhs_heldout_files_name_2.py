@@ -11,18 +11,18 @@ from scipy.optimize import linear_sum_assignment
 # ---------------------------
 # Config
 # ---------------------------
-RAW_DIR = Path("./raw")
-n = 10                      # number to select
+RAW_DIR = Path("./../")
+n = 100                      # number to select
 seed = 123
-weights = np.array([1.0, 1.0, 1.0, 1.0])  # [mp, inc, a, phi]
+weights = np.array([1.0, 1.0, 1.0, 1.0]) # 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])  # [md, alpha, p, q, m_p, i_p, semia, phase, i_view, az_view, honr]
 
 # ---------------------------
 # Regexes
 # ---------------------------
 # 1) Pull the core sim ID from the filename stem (prefix only)
-core_pat = re.compile(r"^(sim\d+_mp[\d\.]+_inc[\d\.]+_a[\d\.]+_phi[\d\.]+)")
+core_pat = re.compile(r"^(sim\d+_m_p[\d\.]+_i_p[\d\.]+_semia[\d\.]+_phase[\d\.]+)")
 # 2) Parse numeric params from the core sim ID
-param_pat = re.compile(r"^sim\d+_mp([\d\.]+)_inc([\d\.]+)_a([\d\.]+)_phi([\d\.]+)$")
+param_pat = re.compile(r"^sim\d+_m_p([\d\.]+)_i_p([\d\.]+)_semia([\d\.]+)_phase([\d\.]+)$")
 
 def extract_core_and_params(stem: str):
     m1 = core_pat.match(stem)
@@ -55,6 +55,7 @@ for p in RAW_DIR.rglob("*.npy"):
 if not records:
     raise RuntimeError(f"No core simulations found under {RAW_DIR}")
 
+# this df has all the simulation file names
 df = pd.DataFrame(records, columns=["simulation","mp","inc","a","phi"]).drop_duplicates("simulation")
 M = len(df)
 if M < n:
