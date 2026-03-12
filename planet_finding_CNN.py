@@ -15,7 +15,7 @@ import torchvision.models as models
 
 @dataclass
 class Config:
-    data_root: str = "./DATA_ROOT"          # <- change this
+    data_root: str = "../train_all/planet_only"          # <- change this
     num_epochs: int = 60
     batch_size: int = 8                      # cubes are heavy; start small
     lr: float = 1e-3
@@ -93,7 +93,7 @@ class PlanetCubeFolderDataset(Dataset):
             raise ValueError(f"{path}: expected 3D array, got {arr.shape}")
 
         # Ensure channels-first
-        if arr.shape[0] in (40, 47, 61, 75):  # likely already (C,H,W)
+        if arr.shape[0] in (41, 47, 61, 75):  # likely already (C,H,W)
             x = arr
         else:
             # assume (H,W,C)
@@ -119,33 +119,22 @@ class PlanetCubeFolderDataset(Dataset):
 # Model helpers: modify input stem to C channels
 # =========================
 
-def replace_first_conv(module: nn.Module, in_channels: int) -> None:
+def replace_first_conv(module: nn.Module, in_channels: int, model) -> None:
     """
     Replace the first Conv2d found in `module` with an identical Conv2d except for in_channels.
     This is a practical way to adapt torchvision models to C not =3.
     """
     for name, child in module.named_children():
-        if isinstance(child, nn.Conv2d):
-            old = child
-            new = nn.Conv2d(
-                in_channels=in_channels,
-                out_channels=old.out_channels,
-                kernel_size=old.kernel_size,
-                stride=old.stride,
-                padding=old.padding,
-                dilation=old.dilation,
-                groups=old.groups,
-                bias=(old.bias is not None),
-                padding_mode=old.padding_mode,
-            )
-            setattr(module, name, new)
-            return
-        else:
-            replace_first_conv(child, in_channels)
-            # if replaced deeper, stop recursion by checking again
-            # (simple approach: if first conv is already in_channels, we can stop early)
-            # but safe enough to let it run; it returns once it finds a conv
+       old = model.features[0][0]
 
+       model.features[0][0] = nn.Conv2d(
+          in_channels=41,
+          out_channels=old.out_channels,
+          kernel_size=old.kernel_size,
+          stride=old.stride,
+          padding=old.padding,
+          bias=False,
+          )
 
 def build_model(model_name: str, in_channels: int, num_classes: int = 2) -> nn.Module:
     """
@@ -166,7 +155,7 @@ def build_model(model_name: str, in_channels: int, num_classes: int = 2) -> nn.M
         raise ValueError("model_name must be one of: regnet_y_400mf, regnet_y_8gf, regnet_y_16gf, efficientnet_v2_s")
 
     # Change input stem to accept C channels
-    replace_first_conv(model, in_channels)
+    replace_first_conv(model, in_channels, model)
 
     # Replace classifier head to output 2 classes
     if hasattr(model, "fc") and isinstance(model.fc, nn.Linear):  # regnet
@@ -260,6 +249,8 @@ def main():
     val_ds   = PlanetCubeFolderDataset(val_dir,   normalize=cfg.normalize)
     test_ds  = PlanetCubeFolderDataset(test_dir,  normalize=cfg.normalize)
 
+    print('created planetcubefolders')
+
     # Infer C from first item
     C, H, W = train_ds[0][0].shape
 
@@ -270,7 +261,11 @@ def main():
     test_loader  = DataLoader(test_ds,  batch_size=cfg.batch_size, shuffle=False,
                               num_workers=cfg.num_workers, pin_memory=True)
 
+    print('DataLoader run')
+
     model = build_model(cfg.model_name, in_channels=C, num_classes=2).to(device)
+
+    print('model built')
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
