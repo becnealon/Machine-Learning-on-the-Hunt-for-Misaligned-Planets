@@ -119,22 +119,35 @@ class PlanetCubeFolderDataset(Dataset):
 # Model helpers: modify input stem to C channels
 # =========================
 
-def replace_first_conv(module: nn.Module, in_channels: int, model) -> None:
+def replace_first_conv(module: nn.Module, in_channels: int) -> bool:
     """
     Replace the first Conv2d found in `module` with an identical Conv2d except for in_channels.
     This is a practical way to adapt torchvision models to C not =3.
     """
     for name, child in module.named_children():
-       old = model.features[0][0]
+        if isinstance(child, nn.Conv2d):
+           old = child
+           new = nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=old.out_channels,
+                kernel_size=old.kernel_size,
+                stride=old.stride,
+                padding=old.padding,
+                dilation=old.dilation,
+                groups=1,
+                bias=(old.bias is not None),
+                padding_mode=old.padding_mode,
+            )
+           setattr(module, name, new)
+           return True
+        else:
+           replace_first_conv(child, in_channels)
+           return True # propagate step upward
+           # if replaced deeper, stop recursion by checking again
+           # (simple approach: if first conv is already in_channels, we can stop early)
+           # but safe enough to let it run; it returns once it finds a conv
 
-       model.features[0][0] = nn.Conv2d(
-          in_channels=41,
-          out_channels=old.out_channels,
-          kernel_size=old.kernel_size,
-          stride=old.stride,
-          padding=old.padding,
-          bias=False,
-          )
+    return False
 
 def build_model(model_name: str, in_channels: int, num_classes: int = 2) -> nn.Module:
     """
@@ -155,7 +168,7 @@ def build_model(model_name: str, in_channels: int, num_classes: int = 2) -> nn.M
         raise ValueError("model_name must be one of: regnet_y_400mf, regnet_y_8gf, regnet_y_16gf, efficientnet_v2_s")
 
     # Change input stem to accept C channels
-    replace_first_conv(model, in_channels, model)
+    replace_first_conv(model, in_channels)
 
     # Replace classifier head to output 2 classes
     if hasattr(model, "fc") and isinstance(model.fc, nn.Linear):  # regnet
@@ -239,6 +252,7 @@ def run_epoch(model, loader, device, criterion, optimizer=None, scaler=None):
 
 
 def main():
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     train_dir = os.path.join(cfg.data_root, "train")
@@ -248,6 +262,13 @@ def main():
     train_ds = PlanetCubeFolderDataset(train_dir, normalize=cfg.normalize)
     val_ds   = PlanetCubeFolderDataset(val_dir,   normalize=cfg.normalize)
     test_ds  = PlanetCubeFolderDataset(test_dir,  normalize=cfg.normalize)
+
+    print(len(train_ds[0]),len(train_ds[1]),len(train_ds[2]),'*******')
+
+    # Tom's test
+    sample, label = train_ds[0]
+    print(f"sample shape: {sample.shape}, dtype: {sample.dtype}, label: {label}")
+    print(f"Dataset length: {len(train_ds)}")
 
     print('created planetcubefolders')
 
@@ -261,6 +282,9 @@ def main():
     test_loader  = DataLoader(test_ds,  batch_size=cfg.batch_size, shuffle=False,
                               num_workers=cfg.num_workers, pin_memory=True)
 
+    batch_imgs, batch_labels = next(iter(train_loader))
+    print(f"Batch shape: {batch_imgs.shape}")  # expect (batch_size, C, H, W)
+
     print('DataLoader run')
 
     model = build_model(cfg.model_name, in_channels=C, num_classes=2).to(device)
@@ -271,10 +295,14 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     scaler = torch.cuda.amp.GradScaler() if (cfg.use_amp and device.type == "cuda") else None
 
+    print('criterion, optimizer and scaler run')
+
     best_val_loss = float("inf")
     best_state = None
     patience_counter = 0
     best_epoch = -1
+
+    print('about to start epochs')
 
     for epoch in range(1, cfg.num_epochs + 1):
         tr_loss, tr_acc, tr_auc = run_epoch(model, train_loader, device, criterion, optimizer, scaler)
